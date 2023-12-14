@@ -1,0 +1,399 @@
+---
+title: "Analyzing YouTubers' Popularity and Financial Success"
+author: "Qichuan Zhou"
+date: "2023-12-08"
+output: word_document
+---
+
+```{r setup, include=FALSE, tidy=TRUE}
+knitr::opts_chunk$set(echo=FALSE,cache=TRUE, 
+                      autodep=TRUE, cache.comments=FALSE,
+                      message=FALSE, warning=FALSE,
+                      fig.width=4.5, fig.height=3)
+```
+
+```{r}
+library(xml2)
+library(rvest)
+library(tidyverse)
+library(scatterplot3d)
+library(rgl)
+library(plotly)
+library(gridExtra)
+library(psych)
+```
+
+## **Motivation:**
+
+* As one of the most popular websites in 2023, the successes of YouTube channels rely heavily on the audience worldwide. Therefore, investigating the factors that drive its success in terms of both popularity and earning potential may help us uncover the underlying global trends. In general, this project focuses on the secret of the popularity and financial success of certain YouTube channels both from an individual and country level perspective. 
+* I believe that this project could provide a deeper understanding of the media and entertainment landscape across various countries and shed light on the elements that make a channel engaging. Moreover, popular YouTube channels may have a significant impact on societal change, potentially facilitating digital diplomacy. By studying the relationship between a channel’s popularity and the socioeconomic factors within its originating country, we could find out if these widely believed statements hold true.
+* Specifically, this project will focus on the following questions:
+  + What are the key individual characteristics that significantly impact a YouTube channel's popularity and financial success?
+  + How do country-level characteristics contribute to a YouTube channel's popularity and financial success?
+  + How can we segment YouTubers in the dataset into distinctive groups based on their characteristics?
+
+## **Data Sources:**
+
+* There are two data sources in total.
+* The first dataset can be downloaded from the Kaggle website with the following link: <https://www.kaggle.com/datasets/nelgiriyewithana/global-youtube-statistics-2023*> and is sourced from a csv file. It provides a comprehensive overview of YouTube metrics on a global scale for the year 2023. These metrics associated with YouTube creators include the number of subscribers, video views, upload frequency, average yearly earnings, inception date, and more. We retrieved a total of 995 records where each captures the statistics of a prominent YouTuber.
+* The secondary dataset was a merged dataset containing country-level variables. It encompasses demographic data for countries worldwide, including GDP per capita, Gross Tertiary Education Enrollment, urban population, English Proficiency Index, country-level censorship score, and internet user population. This dataset was acquired through web scraping techniques from websites like wikipedia. In this dataset, each record represents a country's statistical data.
+
+## **Data Manipulation and Visualization**
+
+* Prior to merging two datasets, all extraneous variables were eliminated from both data frames I established, streamlining our final combined dataset to the greatest degree. Subsequently, all character-type demographic variables at a country level were transformed into numeric data points given their essential role in the following linear regression analyses and ANOVA tests. The subsequent step involved assessing the instances of 'NA' values in each column and dropping all rows that contained such values. I refrained from using imputation methods given that most missing data pertained to several categorical variables in the "YouTube" dataset, indicating that missing values were not randomly distributed. Consequently, no one imputation method would suitably address this circumstance. Additionally, numeric variables such as `video views` and `subscribers` with a value of 0 were interpreted as unavailable, hence rows consisting of zeros were also omitted from the final refined dataset. Having accomplished these steps, I created a novel variable `avg_yearly_earnings` as an average of `lowest_yearly_earnings` and `highest_yearly_earnings` since it plays a crucial role as a dependent variable in our research questions.
+
+```{r}
+# read in youtube data
+youtube <- read.csv("D:/Fall_2023/SurvMeth 727/Final Project/Global YouTube Statistics.csv")
+```
+
+```{r, include=FALSE}
+str(youtube)
+youtube <- youtube %>% rename(ter_educ = Gross.tertiary.education.enrollment....)
+
+```
+```{r}
+youtube <- youtube %>% mutate(avg_yearly_earnings = (lowest_yearly_earnings + highest_yearly_earnings)/2)
+```
+
+```{r, include=FALSE}
+# Web scrape GDP data
+page <- read_html("https://en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal)")
+tables <- page %>% html_table(fill = TRUE)
+#str(tables)
+
+
+gdp <- tables[[3]]
+
+gdp <- subset(gdp, select = c("Country/Territory", "IMF[1][13]"))
+gdp <- gdp %>% rename(Country = "Country/Territory",
+                      gdp_percap = "IMF[1][13]") 
+gdp <- gdp[-c(1,2),]
+
+gdp$gdp_percap <- as.numeric(gsub(",", "", gdp$gdp_percap))
+               
+```
+
+```{r, include=FALSE}
+# Web scrape English Proficiency Index data
+page2 <- read_html("https://en.wikipedia.org/wiki/EF_English_Proficiency_Index")
+tables <- page2 %>% html_table(fill = TRUE)
+epi <- tables[[1]]
+str(epi)
+
+epi <- subset(epi, select = c("Country", "2023 score"))
+epi <- epi %>% rename(epi_score = "2023 score")
+```
+
+```{r, include=FALSE}
+# Web scrape Internet User data
+page3 <- read_html("https://en.wikipedia.org/wiki/List_of_countries_by_number_of_Internet_users")
+tables <- page3 %>% html_table(fill = TRUE)
+int_user <- tables[[6]]
+
+int_user <- subset(int_user, select = c("Country or area", "Internet users"))
+int_user <- int_user %>% rename(Country = "Country or area",
+                                int_user = "Internet users")
+
+int_user$int_user <- as.numeric(gsub(",", "", int_user$int_user))
+```
+
+```{r}
+# Web scrape censorship policy data
+page4 <- read_html("https://en.wikipedia.org/wiki/Freedom_on_the_Net")
+tables <- page4 %>% html_table(fill = TRUE)
+censorship <- tables[[2]]
+
+censorship <- censorship %>% rename(censor_score = "Score")
+```
+
+```{r}
+# Combine datasets
+glob_yt <- left_join(youtube, gdp, by = "Country") %>% 
+  left_join(epi, by = "Country") %>% 
+  left_join(int_user, by = "Country") %>% 
+  left_join(censorship, by = "Country")
+```
+
+```{r}
+# Discard redundant columns
+glob_yt <- dplyr::select(glob_yt, -c(rank, Abbreviation, channel_type, video_views_rank, country_rank, channel_type_rank, video_views_for_the_last_30_days, lowest_monthly_earnings, highest_monthly_earnings, subscribers_for_last_30_days, Unemployment.rate))
+```
+
+```{r}
+# First, convert NAN to NA
+glob_yt[is.na(glob_yt)] <- NA
+# Impute 0(NA) in two columns with the median ("video-views" and "uploads")
+glob_yt$video.views[glob_yt$video.views == 0] <- median(glob_yt$video.views)
+glob_yt$uploads[glob_yt$uploads == 0] <- median(glob_yt$uploads)
+glob_yt$avg_yearly_earnings[glob_yt$avg_yearly_earnings == 0] <- median(glob_yt$avg_yearly_earnings)
+```
+
+```{r}
+# Impute NA in "epi" to 700, which stands for English speaking countries
+glob_yt$epi_score[is.na(glob_yt$epi_score)] <- 700
+```
+
+```{r, include=FALSE}
+# Count the number of NAs in each column
+for (col in names(glob_yt)) {
+  na_count <- sum(is.na(glob_yt[[col]]))
+  cat("Column:", col, "\t NA Count:", na_count, "\n")
+}
+```
+
+```{r}
+# Remove rows that contain NAs
+glob_yt <- na.omit(glob_yt)
+```
+
+```{r, include=FALSE}
+str(glob_yt)
+```
+
+## **What are the key individual characteristics that significantly impact a YouTube channel's popularity and financial success?**
+
+Popularity:  `video views`
+Financial success: `average yearly earnings`
+Possible Individual Characteristics: `category`, `subscribers`, `uploads`, `created_year`
+
+* At the outset, I identified several factors potentially influencing a YouTube channel’s popularity and earning capability. The dependent variables here are total video views and average yearly earnings, serving as proxies for popularity and financial success respectively. The examination concentrated on four predictor variables: the number of subscribers, the number of uploads, channel category, and the year of channel creation.
+
+* Subsequently, I initiated a series of exploratory visualizations. Beneath, one can find a bar graph representing the quantity of YouTube channels in each category respectively.
+
+```{r}
+# Draw bar plot for category
+cat_count <- glob_yt %>% 
+  group_by(category) %>% 
+  summarise(n = n()) %>% 
+  mutate(percentage = n / sum(n))
+
+cat_count <- cat_count[-nrow(cat_count), ]
+
+ggplot(cat_count, aes(x = reorder(category, n), y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  labs(title = "Number of Channels in Each Channel Type",
+       x = "Category",
+       y = "Counts")
+```
+
+* I proceeded to create boxplots, showcasing a visual representation of the distribution for two dependent variables and two numerical predictor variables. Furthermore, a bar chart illuminating the numerical breakdown of channel creation years is presented below.
+
+```{r, fig.width=8, fig.height=11}
+# Create boxplot for "subscribers"
+p1 <- ggplot(glob_yt, aes(y = subscribers)) +
+  geom_boxplot(fill = "red") +
+  labs(title = "Subscribers Distribution")
+
+# Create boxplot for "video views"
+p2 <- ggplot(glob_yt, aes(y = video.views)) +
+  geom_boxplot(fill = "green") +
+  labs(title = "Video Views Distribution")
+
+# Create boxplot for "uploads"
+p3 <- ggplot(glob_yt, aes(y = uploads)) +
+  geom_boxplot(fill = "blue") +
+  labs(title = "Uploads Distribution")
+
+# Create boxplot for "avg_yearly_earnings"
+p4 <- ggplot(glob_yt, aes(y = avg_yearly_earnings)) +
+  geom_boxplot(fill = "yellow") +
+  labs(title = "Average Yearly Earnings Distribution")
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+```{r}
+# Draw bar plot to show the number of channels created in each year
+year_count <- glob_yt %>%
+  group_by(created_year) %>% 
+  summarise(n = n())
+
+ggplot(year_count, aes(x = created_year, y = n)) +
+  geom_bar(stat = "identity", fill = "steelblue") + 
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(x = "Created Year", y = "Number of Channels", 
+       title = "Number of Channels Created in Each Year") +
+  scale_x_continuous(limits = c(2003, 2023))
+```
+
+* The scatterplot below vividly highlights the interplay among four essential variables. Each channel category is distinguished by color, while the magnitude of data points mirrors the respective channel’s annual average earnings. Notably, a positive correlation between the number of subscribers and the total video view count is observed. Furthermore, an emerging trend indicates an upward trajectory in a channel's average yearly earnings with an increase in the subscriber count.
+
+```{r, fig.width=8, fig.height=11}
+# Scatter plot for subscribers vs. video views with size and color encoding
+library(ggrepel)
+library(dplyr)
+library(scales)
+glob_yt$Youtuber <- iconv(glob_yt$Youtuber, "latin1", "ASCII", sub = "")
+
+color_palette <- grDevices::hcl.colors(n = 19, palette = "Set2")
+
+p <- glob_yt %>%
+  ggplot(aes(x=subscribers, y=video.views,
+              size=avg_yearly_earnings,
+              color=category)) +
+  geom_point() +
+  scale_x_log10(labels = comma) +
+  scale_y_log10(labels = comma) +
+  ggtitle('Subscribers vs. Video Views by Category') +
+  xlab('Subscribers (in billions)') + ylab('Video Views (in billions)') +
+  scale_color_manual(values = color_palette) +
+  geom_text_repel(aes(label=Youtuber)) 
+
+print(p)
+```
+
+
+* The pairplot below highlights the interplay among four essential numeric variables. It demonstrates strong correlation between video views and average yearly earnings, video views and the number of subscribers, moderate correlation between average yearly earnings and the number of subscribers.
+
+```{r}
+# Draw pairplots for video.views, uploads, avg_yearly earnings, subscribers
+df_num <- dplyr::select(glob_yt, c(video.views, uploads, avg_yearly_earnings, subscribers))
+
+pairs.panels(df_num,
+             method = "pearson",   
+             hist.col = "#00AFBB", 
+             density = TRUE,       
+             ellipses = TRUE,      
+             scale = TRUE,
+             main = "Correlation analysis of four critical numeric variables")
+
+```
+
+* Given the distinct outliers noticeable in the boxplots of key variables, I employed a Box-Cox transformation on the dependent variables to counterbalance the pronounced “heavy tail” effect. Following this, I executed a linear regression analysis and an Analysis of Variance (ANOVA) test to test the intuitive conclusions drawn from our preliminary visual explorations.
+* Drawing from the ANOVA table presented below, it can be inferred that the number of uploads and the number of subscribers substantially and positively correlate with a YouTube channel’s popularity and financial prosperity. Yet, there is insufficient evidence to establish a significant connection between the year of the channel’s inception and the dependent variables. Moreover, it is noticeable that different categories exhibit different levels of popularity and earning potential.
+
+```{r}
+library(faraway)
+library(MASS)
+library(janitor)
+```
+
+```{r}
+model1 <- lm(log(video.views) ~ subscribers + uploads + created_year, glob_yt)
+summary(model1)
+model1 <- aov(log(video.views) ~ subscribers + uploads + created_year, glob_yt)
+summary(model1)
+```
+
+```{r}
+model2 <- lm(avg_yearly_earnings ~ subscribers + uploads + created_year, glob_yt)
+summary(model2)
+model2 <- aov(avg_yearly_earnings ~ subscribers + uploads + created_year, glob_yt)
+summary(model2)
+```
+
+```{r}
+model <- lm(log(video.views) ~ factor(category), glob_yt)
+anova(model)
+```
+
+## **How do country-level characteristics contribute to a YouTube channel's popularity and financial success?**
+
+Popularity:  `video views`
+Financial success: `average yearly earnings`
+Possible country-level predictor variables: `Population`, `Urban_population`, `gdp_percap`, `ter_educ`, `epi_score`, 
+`int_user`, `censor_score`
+
+* Most variables' names are self-explanatory, but some may require further illustration. "ter_educ" stands for Gross Tertiary Education Enrollment; "epi_score" refers to English Proficiency Index score, which attempts to rank countries by the equity of English language skills among those adults who took the EF test; "censor_score" stands for "Freedom on the Net" score, which are a set of numerical ratings regarding the state of Internet freedom for countries worldwide.
+
+* The world map below displays the distribution of the home country of YouTubers in the dataset.
+
+```{r, fig.width=8, fig.height=6}
+library(maps)
+library(countrycode)
+country_video <- glob_yt %>% group_by(Country) %>% summarise(count_video.views = n())
+country_video <- as.data.frame(country_video)
+
+country_video$Country[country_video$Country == "United States"] <- "USA"
+country_video$Country[country_video$Country == "United kingdom"] <- "UK"
+
+
+
+
+world_map <- map_data("world")
+
+world_map$region <- tolower(world_map$region)
+#table(world_map$region)
+country_video$Country <- tolower(country_video$Country)
+
+merged_data <- left_join(world_map, country_video, by = c("region" = "Country"))
+
+ggplot(data = merged_data, 
+       mapping = aes(x = long, y = lat, group = group, fill = count_video.views)) +
+  geom_polygon(color = "black") +
+  coord_quickmap() +
+  scale_fill_gradient(low = "white", high = "red", na.value = "gray") +
+  labs(title = "Global Youtubers in the dataset", fill = "YouTube User Count")
+```
+
+* Through the regression analysis, I surprisingly found that among these country-level factors, only population and GDP per capita of the country of the YouTube channel creator are positively and significantly associated with the channel’s popularity and all of the country-level factors fail to contribute significantly to a YouTube channel's financial success.
+
+```{r}
+model1 <- lm(log(video.views) ~ Population + Urban_population + gdp_percap + ter_educ + epi_score + int_user + censor_score, glob_yt)
+summary(model1)
+```
+```{r}
+model2 <- lm(log(avg_yearly_earnings) ~ Population + Urban_population + gdp_percap + ter_educ + epi_score + int_user + censor_score, glob_yt)
+summary(model2)
+```
+
+## **How can we segment YouTubers in the dataset into distinctive groups based on their characteristics?**
+
+```{r, fig.width=8, fig.height=6}
+library(magrittr)
+library(factoextra)
+
+hclust_data <- glob_yt %>% dplyr::select(video.views, avg_yearly_earnings, subscribers, uploads, created_year) %>% mutate_all(scale)
+
+hclust_distmat <- dist(hclust_data)
+hc_ward <- hclust(hclust_distmat, method = "ward.D2")
+
+plot(hc_ward, main = "Hierarchical Clustering", xlab = "", sub = "")
+rect.hclust(hc_ward, k = 9, border = "red")
+```
+
+```{r}
+fviz_nbclust(hclust_data,
+             kmeans,
+             method = "wss",
+             k.max = 20)
+```
+
+* Utilizing hierarchical and kmeans clustering, I finalized the number of clusters to be nine and summarized the mean of critical variables grouped by clusters in the column displayed on the slide. According to this column, I could put distinctive and well-characterized tags on each cluster of YouTuber based on theri individual characteristics as below.
+
+```{r}
+km <- kmeans(hclust_data, 9, nstart = 20)
+```
+
+
+```{r}
+glob_yt$cluster <- factor(km$cluster)
+```
+
+```{r}
+glob_yt %>% group_by(cluster) %>% summarise(mean_videoviews = mean(video.views),
+                                            mean_avg_yearly_earnings = mean(avg_yearly_earnings),
+                                            mean_subscribers = mean(subscribers),
+                                            mean_uploads = mean(uploads))
+```
+* The following nine tags correspond to the nine clusters.
+
+  + YouTubers boasting a substantial number of video views, significant average yearly earnings, a considerable amount of subscribers, and a prolific number of uploads.
+
+  + YouTubers with a modest number of video views, lower average yearly earnings, a limited number of subscribers, and few uploads.
+
+  + YouTubers maintaining a balanced combination of video views, average yearly earnings, subscribers, and uploads—each at a moderate level.
+
+  + YouTubers featuring a small number of video views, low average yearly earnings, a limited number of subscribers, and a moderate number of uploads.
+
+  + Youtubers presenting a balanced mix with a moderate number of video views, high average yearly earnings, a moderate number of subscribers, and a high number of uploads.
+
+  + YouTubers demonstrating a modest number of video views, low average yearly earnings, a moderate number of subscribers, and a balanced number of uploads.
+
+  + YouTubers displaying a limited number of video views, low average yearly earnings, a moderate number of subscribers, and a low number of uploads.
+
+  + Youtubers maintaining a balanced combination with a moderate number of video views, moderate average yearly earnings, a moderate number of subscribers, and a high number of uploads.
+
+  + YouTubers featuring a moderate number of video views, moderately high average yearly earnings, a limited number of subscribers, and a low number of uploads.
